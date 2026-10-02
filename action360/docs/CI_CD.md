@@ -7,7 +7,7 @@ The pipeline uses **OIDC workload identity federation**:
 
 1. Each run asks GitHub for a short-lived OIDC token, with audience `snowflakecomputing.com`. This needs `permissions: id-token: write`.
 2. `scripts/run_sql.py` exchanges the token with Snowflake (`authenticator=WORKLOAD_IDENTITY`, `workload_identity_provider=OIDC`).
-3. Snowflake service user `SVC_GITHUB_ACTIONS` has no password and no key. It trusts exactly one subject: `repo:bakiyaswanth/Nexus-360:ref:refs/heads/main`.
+3. Snowflake service user `SVC_GITHUB_ACTIONS` has no password and no key. It trusts exactly one subject: `repo:bakiyaswanth@63598964/Nexus-360@1401278976:ref:refs/heads/main`. This is GitHub's **immutable-ID** subject format: numeric owner and repo IDs, so a renamed or re-created repo with the same name cannot impersonate this one.
 
 So:
 * **Nothing** is stored in GitHub secrets or in the repo.
@@ -41,10 +41,10 @@ Deploys are serialised with a `concurrency` group, so they never run in parallel
 If you rename the repo or deploy from another branch, update the subject:
 ```sql
 ALTER USER SVC_GITHUB_ACTIONS SET WORKLOAD_IDENTITY = (TYPE = OIDC
-  ISSUER = 'https://token.actions.githubusercontent.com' SUBJECT = 'repo:<owner>/<repo>:ref:refs/heads/<branch>');
+  ISSUER = 'https://token.actions.githubusercontent.com' SUBJECT = 'repo:<owner>@<owner_id>/<repo>@<repo_id>:ref:refs/heads/<branch>');
 ```
 
 ## Troubleshooting
 * **`Unable to get ACTIONS_ID_TOKEN_REQUEST_URL` / KeyError:** the job is missing `permissions: id-token: write`.
-* **Authentication failed on a push:** the subject doesn't match. Check the repo owner/name case and the branch. The subject is exact and case-sensitive.
+* **`394729 ... subject or issuer claims were not recognized`:** the subject doesn't match. The error message prints the exact subject GitHub sent. Copy it into `ALTER USER SVC_GITHUB_ACTIONS SET WORKLOAD_IDENTITY = (... SUBJECT = '<that value>')`. Subjects are exact and case-sensitive, with no wildcards.
 * **Network policy added later:** allow GitHub runners with the managed rule `SNOWFLAKE.NETWORK_SECURITY.GITHUBACTIONS_GLOBAL`.
