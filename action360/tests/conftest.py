@@ -14,6 +14,9 @@ RUN_AI = os.environ.get("ACTION360_RUN_AI_TESTS") == "1"  # LLM / agent tests co
 
 @pytest.fixture(scope="session")
 def cur():
+    import snowflake.connector
+    # st.connection (used by the AppTest UI tests) switches the connector to qmark globally; tests use %s binds
+    snowflake.connector.paramstyle = "pyformat"
     c = connect()
     yield c.cursor()
     c.close()

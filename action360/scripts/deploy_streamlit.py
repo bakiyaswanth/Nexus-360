@@ -12,7 +12,7 @@ from run_sql import connect  # noqa: E402
 
 APP = Path(__file__).resolve().parents[1] / "app"
 STAGE = "@ACTION360_DB.APP.APP_STAGE/action360"
-ARTIFACTS = ["streamlit_app.py", "data.py", "environment.yml", ".streamlit/config.toml"]
+ARTIFACTS = ["streamlit_app.py", "data.py", "contracts.py", "state.py", "environment.yml", ".streamlit/config.toml"]
 
 # Warehouse runtime: packages from Snowflake's Anaconda channel (environment.yml), no External Access needed.
 # (The container runtime installs from PyPI and needs an EAI, which trial accounts cannot create.)

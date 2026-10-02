@@ -62,7 +62,7 @@ jobs:
       - name: Parse YAML (semantic view, config)
         run: python -c "import yaml,sys; [yaml.safe_load(open(f)) for f in ('sql/semantic_view.yaml','config/action360.yaml')]; print('yaml ok')"
       - name: Streamlit artifacts present
-        run: python -c "from pathlib import Path; m=[a for a in ('streamlit_app.py','data.py','environment.yml','.streamlit/config.toml') if not (Path('app')/a).exists()]; assert not m, m; print('artifacts ok')"
+        run: python -c "from pathlib import Path; m=[a for a in ('streamlit_app.py','data.py','contracts.py','state.py','environment.yml','.streamlit/config.toml') if not (Path('app')/a).exists()]; assert not m, m; print('artifacts ok')"
 
   deploy:
     name: Deploy to Snowflake
