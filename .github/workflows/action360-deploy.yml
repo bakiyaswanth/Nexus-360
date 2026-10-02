@@ -1,7 +1,7 @@
 # ACTION360 CI/CD -> Snowflake (OIDC workload identity federation, no stored secrets)
 #
 # Auth: GitHub mints a short-lived OIDC token per run (permissions: id-token: write). Snowflake service user
-# SVC_GITHUB_ACTIONS trusts ONLY  repo:bakiyaswanth@63598964/Nexus-360@1401278976:ref:refs/heads/main  (immutable-ID subject;
+# SVC_GITHUB_ACTIONS trusts ONLY  repo:bakiyaswanth@63598964/Nexus-360@1401278976:environment:snowflake-prod  (immutable-ID subject;
 # see action360/sql/ci_bootstrap.sql).
 # PRs and other branches therefore can never authenticate to Snowflake - they only run offline checks.
 # Nothing needs to be configured in GitHub secrets. SNOWFLAKE_ACCOUNT is not a secret (optionally override via repo Variable).
@@ -70,6 +70,9 @@ jobs:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Manual approval gate: required reviewers are configured on this GitHub environment.
+    # It also changes the OIDC subject to ...:environment:snowflake-prod, the only subject Snowflake trusts.
+    environment: snowflake-prod
     permissions:
       id-token: write   # request the OIDC token exchanged with Snowflake
       contents: read    # required by actions/checkout once permissions are declared

@@ -45,9 +45,9 @@ CREATE USER IF NOT EXISTS SVC_GITHUB_ACTIONS
   WORKLOAD_IDENTITY = (
     TYPE = OIDC
     ISSUER = 'https://token.actions.githubusercontent.com'
-    -- GitHub's immutable-ID subject format: repo:<owner>@<owner_id>/<repo>@<repo_id>:ref:refs/heads/<branch>
+    -- GitHub's immutable-ID subject format: repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:<env>  (job uses environment:)
     -- (copy it verbatim from a failed run's error message if the repo is recreated / transferred)
-    SUBJECT = 'repo:bakiyaswanth@63598964/Nexus-360@1401278976:ref:refs/heads/main'
+    SUBJECT = 'repo:bakiyaswanth@63598964/Nexus-360@1401278976:environment:snowflake-prod'
   );
 GRANT ROLE ACTION360_DEPLOYER TO USER SVC_GITHUB_ACTIONS;
 
