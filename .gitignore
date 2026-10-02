@@ -5,6 +5,7 @@
 .env
 **/.streamlit/secrets.toml
 connections.toml
-config.toml
+# Snowflake CLI config (never in repo; lives in ~/.snowflake). Streamlit theme config IS committed.
+.snowflake/
 __pycache__/
 .pytest_cache/
