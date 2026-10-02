@@ -1,6 +1,6 @@
 # ACTION360 project configuration (mirrors ACTION360_DB.CORE.APP_CONFIG, which is the runtime source of truth)
 environment: HACKATHON_DEMO          # downstream actions are SIMULATED
-account: nz85841.central-india.azure # cross-region inference enabled (CORTEX_ENABLED_CROSS_REGION = ANY_REGION)
+account: <ORG>-<ACCOUNT> # cross-region inference enabled (CORTEX_ENABLED_CROSS_REGION = ANY_REGION)
 connection: action360_dev            # key-pair connection in ~/.snowflake/connections.toml
 
 database: ACTION360_DB

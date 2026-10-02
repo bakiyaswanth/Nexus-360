@@ -4,6 +4,8 @@
 --   * no password / private key / token is stored in the repo or in GitHub secrets
 --   * Snowflake trusts only tokens issued for repo bakiyaswanth/Nexus-360, branch main
 -- The CI service user runs as least-privilege role ACTION360_DEPLOYER, which owns ACTION360_DB.
+-- Before running: replace <YOUR_SNOWFLAKE_USER> (step 4) with your own Snowflake login name.
+-- Then set GitHub repo Variable SNOWFLAKE_ACCOUNT to your <ORG>-<ACCOUNT> identifier.
 -- =====================================================================
 USE ROLE ACCOUNTADMIN;
 
@@ -50,4 +52,4 @@ CREATE USER IF NOT EXISTS SVC_GITHUB_ACTIONS
 GRANT ROLE ACTION360_DEPLOYER TO USER SVC_GITHUB_ACTIONS;
 
 -- 4. Local development uses the same role, so local and CI deploys own objects identically
-GRANT ROLE ACTION360_DEPLOYER TO USER BAKIYASWANTH;
+GRANT ROLE ACTION360_DEPLOYER TO USER <YOUR_SNOWFLAKE_USER>;

@@ -12,7 +12,7 @@ The pipeline uses **OIDC workload identity federation**:
 So:
 * **Nothing** is stored in GitHub secrets or in the repo.
 * Pull requests, forks and other branches cannot authenticate, because their token subject differs. They only run offline checks.
-* The account identifier `TJOAEVW-IX99679` is not a secret. It is hardcoded in the workflow and can optionally be overridden with a repository **Variable** `SNOWFLAKE_ACCOUNT` (Settings → Secrets and variables → Actions → Variables).
+* The account identifier is not kept in the repo. The workflow reads it from the repository **Variable** `SNOWFLAKE_ACCOUNT` (Settings → Secrets and variables → Actions → Variables), with a value like `ORGNAME-ACCOUNTNAME`. The deploy job fails fast with a clear message if the Variable is missing.
 * `scripts/check_no_secrets.py` runs on every PR and push. It fails the build if a private key, password, token, `.p8`/`.pem` file or `secrets.toml` is committed.
 
 ## Least privilege
