@@ -1,0 +1,144 @@
+name: CUSTOMER_360_SV
+description: >-
+  Governed Customer 360 semantic layer for ACTION360 (synthetic lender / insurer data). Covers customer identity and segment,
+  products, balances, payment behaviour, renewals, interactions, complaints, sentiment, risk scores, offer eligibility and
+  the deterministic recommended next-best-action. All scores are produced by the auditable ACTION360 rules engine.
+tables:
+  - name: customers
+    description: One row per customer - the unified Customer 360 record including risk, AI route and recommended action.
+    synonyms: [customer, client, borrower, policyholder, customer 360]
+    base_table: {database: ACTION360_DB, schema: CORE, table: CUSTOMER_360}
+    primary_key: {columns: [customer_id]}
+    dimensions:
+      - {name: customer_id, expr: CUSTOMER_ID, data_type: VARCHAR, description: "Customer identifier, format C10000-C19999", synonyms: [customer, customer number, client id], unique: true}
+      - {name: customer_name, expr: FULL_NAME, data_type: VARCHAR, description: Synthetic customer name}
+      - {name: customer_segment, expr: SEGMENT, data_type: VARCHAR, description: Customer segment, synonyms: [segment, tier], is_enum: true, sample_values: [MASS, AFFLUENT, PREMIER, SME]}
+      - {name: business_type, expr: INDUSTRY_TYPE, data_type: VARCHAR, description: Line of business, synonyms: [industry, lending or insurance], is_enum: true, sample_values: [LENDING, INSURANCE]}
+      - {name: city, expr: CITY, data_type: VARCHAR, description: Customer city}
+      - {name: preferred_channel, expr: PREFERRED_CHANNEL, data_type: VARCHAR, description: Preferred contact channel, is_enum: true, sample_values: [APP, EMAIL, CALL, WHATSAPP, BRANCH]}
+      - {name: products, expr: "ARRAY_TO_STRING(PRODUCTS, ', ')", data_type: VARCHAR, description: "Comma separated product codes held (HL home loan, PL personal loan, AL auto loan, CC credit card, MOTOR, HEALTH, FAMILY_FLOATER, TERM_LIFE, HOME_INS)", synonyms: [product holdings]}
+      - {name: payment_status, expr: PAYMENT_STATUS, data_type: VARCHAR, description: "Repayment behaviour over 6 months", is_enum: true, sample_values: [CURRENT, OCCASIONALLY_LATE, DELINQUENT]}
+      - {name: sentiment, expr: SENTIMENT_LABEL, data_type: VARCHAR, description: "Recent (90 day) sentiment label; AI_SENTIMENT where enriched, rule baseline otherwise", synonyms: [recent sentiment, mood], is_enum: true, sample_values: [NEGATIVE, NEUTRAL, POSITIVE, NO RECENT CONTACT]}
+      - {name: risk_tier, expr: RISK_TIER, data_type: VARCHAR, description: "HIGH / MEDIUM / LOW, from the max of churn, payment and service risk vs configured thresholds", synonyms: [risk level, risk band], is_enum: true, sample_values: [HIGH, MEDIUM, LOW]}
+      - {name: primary_risk_type, expr: PRIMARY_RISK_TYPE, data_type: VARCHAR, description: Which risk model drives the overall risk, is_enum: true, sample_values: [CHURN, PAYMENT, SERVICE]}
+      - {name: ai_route, expr: AI_ROUTE, data_type: VARCHAR, description: "Cost-aware AI routing decision", is_enum: true, sample_values: [FULL_AGENT, SELECTIVE_AI, RULES_ONLY]}
+      - {name: recommended_action, expr: RECOMMENDED_ACTION, data_type: VARCHAR, description: "Deterministic next-best-action code", synonyms: [next best action, nba, recommendation], is_enum: true,
+         sample_values: [SERVICE_RECOVERY, PAYMENT_PLAN_DISCUSSION, PRODUCT_UPGRADE, COVERAGE_REVIEW, CLAIM_FOLLOW_UP, RETENTION_OFFER, CROSS_SELL, RENEWAL_REMINDER, COMPLAINT_ESCALATION, NO_ACTION_MONITOR]}
+      - {name: recommended_offer_id, expr: RECOMMENDED_OFFER_ID, data_type: VARCHAR, description: Offer attached to the recommended action (null if none)}
+      - {name: dominant_topic, expr: DOMINANT_TOPIC, data_type: VARCHAR, description: Most frequent interaction topic}
+      - {name: competitor_mentioned, expr: "COMPETITOR_MENTION = 1", data_type: BOOLEAN, description: Customer mentioned switching / a competitor in the last 120 days}
+      - {name: has_delayed_claim, expr: "CLAIM_DELAYED_FLAG = 1", data_type: BOOLEAN, description: Insurance customer with an open claim beyond SLA}
+    time_dimensions:
+      - {name: renewal_date, expr: NEXT_RENEWAL_DATE, data_type: DATE, description: "Next policy renewal / card renewal / loan rate-reset date", synonyms: [renewal, reset date, expiry]}
+      - {name: last_interaction_date, expr: "LAST_INTERACTION_TS::DATE", data_type: DATE, description: Date of the latest interaction}
+    facts:
+      - {name: tenure_months, expr: TENURE_MONTHS, data_type: NUMBER, description: Relationship tenure in months}
+      - {name: credit_score, expr: CREDIT_SCORE, data_type: NUMBER, description: Bureau-style credit score}
+      - {name: balance, expr: TOTAL_OUTSTANDING, data_type: NUMBER, description: "Total outstanding balance (INR) across loans and cards", synonyms: [outstanding, exposure, balance outstanding]}
+      - {name: overdue_amount, expr: OVERDUE_AMOUNT, data_type: NUMBER, description: Unpaid instalment amount in the last 3 months (INR)}
+      - {name: customer_value, expr: ANNUAL_VALUE_INR, data_type: NUMBER, description: Annual relationship value proxy (INR), synonyms: [value, clv]}
+      - {name: days_to_renewal, expr: DAYS_TO_RENEWAL, data_type: NUMBER, description: Days until next renewal / reset}
+      - {name: interaction_count_90d, expr: INTERACTIONS_90D, data_type: NUMBER, description: Interactions in the last 90 days}
+      - {name: complaint_count, expr: COMPLAINTS_90D, data_type: NUMBER, description: Complaints in the last 90 days, synonyms: [complaints]}
+      - {name: unresolved_issues, expr: UNRESOLVED_COUNT, data_type: NUMBER, description: Open or escalated complaints, synonyms: [unresolved complaints, open complaints]}
+      - {name: negative_interactions_90d, expr: NEGATIVE_INTERACTIONS_90D, data_type: NUMBER, description: Negative-sentiment interactions in the last 90 days}
+      - {name: missed_payments_6m, expr: MISSED_6M, data_type: NUMBER, description: Missed or partial instalments in 6 months}
+      - {name: risk_score, expr: RISK_SCORE, data_type: NUMBER, description: "Overall risk 0-1 = max(churn, payment, service)"}
+      - {name: churn_risk, expr: CHURN_RISK, data_type: NUMBER, description: Churn / attrition risk 0-1, synonyms: [attrition risk]}
+      - {name: payment_risk, expr: PAYMENT_RISK, data_type: NUMBER, description: Payment / credit risk 0-1}
+      - {name: service_risk, expr: SERVICE_RISK, data_type: NUMBER, description: Service failure risk 0-1}
+    metrics:
+      - {name: total_customers, expr: COUNT(DISTINCT CUSTOMER_ID), description: Number of customers}
+      - {name: high_risk_customers, expr: "COUNT_IF(RISK_TIER = 'HIGH')", description: Customers in the HIGH risk tier}
+      - {name: average_risk_score, expr: AVG(RISK_SCORE), description: Average overall risk score, synonyms: [average risk, avg risk]}
+      - {name: average_churn_risk, expr: AVG(CHURN_RISK), description: Average churn risk}
+      - {name: total_balance, expr: SUM(TOTAL_OUTSTANDING), description: Total outstanding balance (INR)}
+      - {name: total_complaints, expr: SUM(COMPLAINTS_90D), description: Complaints in the last 90 days}
+      - {name: customers_needing_action, expr: COUNT_IF(NEEDS_ACTION), description: "Customers whose recommended action is not NO_ACTION_MONITOR"}
+      - {name: negative_sentiment_customers, expr: "COUNT_IF(SENTIMENT_LABEL = 'NEGATIVE')", description: Customers with negative recent sentiment}
+      - {name: pct_high_risk_with_unresolved, expr: "DIV0(COUNT_IF(RISK_TIER = 'HIGH' AND UNRESOLVED_COUNT > 0), COUNT_IF(RISK_TIER = 'HIGH'))", description: Share of high-risk customers that have unresolved complaints (0-1)}
+    filters:
+      - {name: high_risk, expr: "RISK_TIER = 'HIGH'", description: High risk customers only}
+      - {name: renewal_next_60_days, expr: "DAYS_TO_RENEWAL BETWEEN 0 AND 60", description: Renewal or rate reset within 60 days}
+      - {name: needs_proactive_servicing, expr: "RECOMMENDED_ACTION IN ('SERVICE_RECOVERY','COMPLAINT_ESCALATION','PROACTIVE_SERVICE_CALL','CLAIM_FOLLOW_UP')", description: Customers whose next-best-action is a servicing action}
+  - name: offer_eligibility
+    description: Deterministic rule-by-rule eligibility of each customer for each offer. IS_ELIGIBLE is authoritative - never infer eligibility otherwise.
+    synonyms: [eligibility, offers, eligible offers]
+    base_table: {database: ACTION360_DB, schema: CORE, table: OFFER_ELIGIBILITY}
+    primary_key: {columns: [elig_customer_id, offer_id]}
+    dimensions:
+      - {name: elig_customer_id, expr: CUSTOMER_ID, data_type: VARCHAR, description: Customer identifier}
+      - {name: offer_id, expr: OFFER_ID, data_type: VARCHAR, description: Offer identifier, is_enum: true,
+         sample_values: [OFF_RATE_MATCH, OFF_RETENTION_CASHBACK, OFF_LOYALTY_RENEWAL, OFF_FEE_WAIVER, OFF_HARDSHIP_PLAN, OFF_PREMIUM_DEFERRAL, OFF_CARD_UPGRADE, OFF_TOPUP_LOAN, OFF_NCB_PROTECT, OFF_FAMILY_FLOATER, OFF_TERM_LIFE]}
+      - {name: offer_name, expr: OFFER_NAME, data_type: VARCHAR, description: Offer name}
+      - {name: offer_category, expr: OFFER_CATEGORY, data_type: VARCHAR, description: Offer category, is_enum: true, sample_values: [RETENTION, SERVICE_RECOVERY, HARDSHIP, UPGRADE, CROSS_SELL]}
+      - {name: is_eligible, expr: IS_ELIGIBLE, data_type: BOOLEAN, description: TRUE only if every hard rule passed}
+      - {name: failed_rules, expr: "ARRAY_TO_STRING(FAILED_RULES, '; ')", data_type: VARCHAR, description: Hard rules that failed with actual values}
+    metrics:
+      - {name: eligible_offer_count, expr: COUNT_IF(IS_ELIGIBLE), description: Number of eligible customer-offer pairs}
+  - name: interactions
+    description: Every customer touchpoint (calls, chats, emails, branch, app) in the last 12 months.
+    synonyms: [touchpoints, contacts, calls, complaints]
+    base_table: {database: ACTION360_DB, schema: CORE, table: FACT_INTERACTION}
+    primary_key: {columns: [interaction_id]}
+    dimensions:
+      - {name: interaction_id, expr: INTERACTION_ID, data_type: VARCHAR, description: Interaction identifier}
+      - {name: int_customer_id, expr: CUSTOMER_ID, data_type: VARCHAR, description: Customer identifier}
+      - {name: channel, expr: CHANNEL, data_type: VARCHAR, description: Channel, is_enum: true, sample_values: [CALL, EMAIL, CHAT, APP, BRANCH, WHATSAPP]}
+      - {name: topic, expr: TOPIC, data_type: VARCHAR, description: Interaction topic}
+      - {name: resolution_status, expr: RESOLUTION_STATUS, data_type: VARCHAR, description: Resolution status, is_enum: true, sample_values: [RESOLVED, OPEN, ESCALATED]}
+      - {name: is_complaint, expr: IS_COMPLAINT, data_type: BOOLEAN, description: Interaction is a complaint}
+    time_dimensions:
+      - {name: interaction_date, expr: "INTERACTION_TS::DATE", data_type: DATE, description: Interaction date}
+    metrics:
+      - {name: interaction_count, expr: COUNT(INTERACTION_ID), description: Number of interactions}
+      - {name: complaint_interactions, expr: COUNT_IF(IS_COMPLAINT), description: Number of complaint interactions}
+relationships:
+  - name: eligibility_to_customer
+    left_table: offer_eligibility
+    right_table: customers
+    relationship_columns: [{left_column: elig_customer_id, right_column: customer_id}]
+    join_type: left_outer
+    relationship_type: many_to_one
+  - name: interaction_to_customer
+    left_table: interactions
+    right_table: customers
+    relationship_columns: [{left_column: int_customer_id, right_column: customer_id}]
+    join_type: left_outer
+    relationship_type: many_to_one
+custom_instructions: >-
+  Risk tiers, eligibility and recommended actions are computed by governed rules - always read them from the columns, never recompute or invent them.
+  Offer eligibility must come only from offer_eligibility.is_eligible. Amounts are in INR. Customer IDs look like C10238.
+verified_queries:
+  - name: high_risk_customers_list
+    question: Which customers are high risk?
+    sql: "SELECT customer_id, customer_name, customer_segment, primary_risk_type, risk_score, recommended_action FROM __customers WHERE risk_tier = 'HIGH' ORDER BY risk_score DESC LIMIT 50"
+    verified_at: 1790899200
+    verified_by: ACTION360 team
+    use_as_onboarding_question: true
+  - name: avg_risk_by_segment
+    question: What is the average risk by segment?
+    sql: "SELECT customer_segment, AVG(risk_score) AS average_risk_score, COUNT(DISTINCT customer_id) AS total_customers FROM __customers GROUP BY customer_segment ORDER BY average_risk_score DESC"
+    verified_at: 1790899200
+    verified_by: ACTION360 team
+    use_as_onboarding_question: true
+  - name: negative_sentiment_upcoming_renewal
+    question: Which customers have negative sentiment and an upcoming renewal?
+    sql: "SELECT customer_id, customer_name, renewal_date, days_to_renewal, sentiment, recommended_action FROM __customers WHERE sentiment = 'NEGATIVE' AND days_to_renewal BETWEEN 0 AND 60 ORDER BY days_to_renewal"
+    verified_at: 1790899200
+    verified_by: ACTION360 team
+  - name: pct_high_risk_unresolved
+    question: What percentage of high-risk customers had unresolved complaints?
+    sql: "SELECT DIV0(COUNT_IF(unresolved_issues > 0), COUNT(*)) * 100 AS pct_high_risk_with_unresolved FROM __customers WHERE risk_tier = 'HIGH'"
+    verified_at: 1790899200
+    verified_by: ACTION360 team
+  - name: eligible_offers_for_customer
+    question: Which offers is customer C10238 eligible for?
+    sql: "SELECT offer_id, offer_name, offer_category, is_eligible, failed_rules FROM __offer_eligibility WHERE elig_customer_id = 'C10238' ORDER BY is_eligible DESC, offer_id"
+    verified_at: 1790899200
+    verified_by: ACTION360 team
+  - name: proactive_servicing_needed
+    question: Which customers need proactive servicing?
+    sql: "SELECT customer_id, customer_name, customer_segment, recommended_action, unresolved_issues, customer_value FROM __customers WHERE recommended_action IN ('SERVICE_RECOVERY','COMPLAINT_ESCALATION','PROACTIVE_SERVICE_CALL','CLAIM_FOLLOW_UP') ORDER BY customer_value DESC LIMIT 50"
+    verified_at: 1790899200
+    verified_by: ACTION360 team

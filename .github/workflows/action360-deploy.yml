@@ -1,0 +1,118 @@
+# ACTION360 CI/CD -> Snowflake (OIDC workload identity federation, no stored secrets)
+#
+# Auth: GitHub mints a short-lived OIDC token per run (permissions: id-token: write). Snowflake service user
+# SVC_GITHUB_ACTIONS trusts ONLY  repo:bakiyaswanth/Nexus-360:ref:refs/heads/main  (see action360/sql/ci_bootstrap.sql).
+# PRs and other branches therefore can never authenticate to Snowflake - they only run offline checks.
+# Nothing needs to be configured in GitHub secrets. SNOWFLAKE_ACCOUNT is not a secret (optionally override via repo Variable).
+name: ACTION360 deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ["action360/**", ".github/workflows/action360-deploy.yml"]
+  pull_request:
+    paths: ["action360/**", ".github/workflows/action360-deploy.yml"]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "app-layer = redeploy objects + app (default); skip-ai = full rebuild w/o paid AI; full = full rebuild incl. AI enrichment (~5 credits)"
+        type: choice
+        options: [app-layer, skip-ai, full]
+        default: app-layer
+      run_ai_eval:
+        description: "Also run LLM/agent tests + evaluation benchmark (small credit cost)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: action360-snowflake-deploy
+  cancel-in-progress: false   # never interrupt a running deploy
+
+env:
+  SNOWFLAKE_ACCOUNT: ${{ vars.SNOWFLAKE_ACCOUNT || 'TJOAEVW-IX99679' }}
+  SNOWFLAKE_ROLE: ACTION360_DEPLOYER
+  SNOWFLAKE_WAREHOUSE: ACTION360_WH
+  PYTHONIOENCODING: utf-8
+  PYTHONUNBUFFERED: "1"
+
+defaults:
+  run:
+    working-directory: action360
+
+jobs:
+  validate:
+    name: Offline checks (no Snowflake access)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: action360/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Secret scan
+        run: python scripts/check_no_secrets.py
+      - name: Byte-compile Python
+        run: python -m compileall -q app scripts tests
+      - name: Parse YAML (semantic view, config)
+        run: python -c "import yaml,sys; [yaml.safe_load(open(f)) for f in ('sql/semantic_view.yaml','config/action360.yaml')]; print('yaml ok')"
+      - name: Streamlit artifacts present
+        run: python -c "from pathlib import Path; m=[a for a in ('streamlit_app.py','data.py','.streamlit/config.toml') if not (Path('app')/a).exists()]; assert not m, m; print('artifacts ok')"
+
+  deploy:
+    name: Deploy to Snowflake
+    needs: validate
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      id-token: write   # request the OIDC token exchanged with Snowflake
+      contents: read    # required by actions/checkout once permissions are declared
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: action360/requirements.txt
+      - run: pip install -r requirements.txt
+
+      - name: Verify Snowflake connection (OIDC)
+        run: |
+          python - <<'PY'
+          import sys; sys.path.insert(0, "scripts")
+          from run_sql import connect
+          c = connect().cursor()
+          print(c.execute("SELECT CURRENT_USER(), CURRENT_ROLE(), CURRENT_WAREHOUSE(), CURRENT_ACCOUNT()").fetchone())
+          PY
+
+      - name: Deploy (${{ inputs.mode || 'app-layer' }})
+        run: |
+          case "${{ inputs.mode || 'app-layer' }}" in
+            app-layer) python scripts/deploy_all.py --app-layer ;;
+            skip-ai)   python scripts/deploy_all.py --skip-ai ;;
+            full)      python scripts/deploy_all.py ;;
+          esac
+
+      - name: Deterministic tests (data, signals, eligibility, NBA, audit)
+        run: python -m pytest tests -q --junitxml=test-results.xml
+
+      - name: LLM / agent tests + evaluation benchmark
+        if: inputs.run_ai_eval == true
+        env:
+          ACTION360_RUN_AI_TESTS: "1"
+        run: |
+          python -m pytest tests -q -k "prompt_output or agent_orchestrates"
+          python tests/run_evaluation.py --with-outreach --with-agent
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: action360/test-results.xml
+          if-no-files-found: ignore

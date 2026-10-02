@@ -1,0 +1,33 @@
+# ACTION360 project configuration (mirrors ACTION360_DB.CORE.APP_CONFIG, which is the runtime source of truth)
+environment: HACKATHON_DEMO          # downstream actions are SIMULATED
+account: nz85841.central-india.azure # cross-region inference enabled (CORTEX_ENABLED_CROSS_REGION = ANY_REGION)
+connection: action360_dev            # key-pair connection in ~/.snowflake/connections.toml
+
+database: ACTION360_DB
+schemas: {raw: RAW, core: CORE, ai: AI, app: APP}
+warehouse: {name: ACTION360_WH, size: XSMALL, auto_suspend_s: 60, resource_monitor: ACTION360_RM, credit_quota: 60}
+role_business_users: ACTION360_ANALYST
+
+stages:
+  documents: "@ACTION360_DB.RAW.DOCS_STAGE"
+  audio: "@ACTION360_DB.RAW.AUDIO_STAGE"
+  app: "@ACTION360_DB.APP.APP_STAGE/action360"
+
+cortex_search_services:
+  interactions: ACTION360_DB.AI.INTERACTION_SEARCH
+  knowledge: ACTION360_DB.AI.KNOWLEDGE_SEARCH
+semantic_view: ACTION360_DB.AI.CUSTOMER_360_SV
+cortex_agent: ACTION360_DB.AI.ACTION360_AGENT
+ai_functions:
+  - ACTION360_DB.AI.SUMMARIZE_CUSTOMER_RISK       # claude-haiku-4-5
+  - ACTION360_DB.AI.GENERATE_PERSONALIZED_ACTION  # claude-sonnet-4-6
+streamlit_app: {name: ACTION360_DB.APP.ACTION360_APP, runtime: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11, compute_pool: SYSTEM_COMPUTE_POOL_CPU}
+
+routing:
+  LLM_ENRICHMENT_THRESHOLD: 0.60        # risk >= -> FULL_AGENT
+  SELECTIVE_ENRICHMENT_THRESHOLD: 0.35  # risk >= (or opportunity >= 0.6) -> SELECTIVE_AI, else RULES_ONLY
+  MAX_TRANSCRIPTS_SELECTIVE: 1
+  MAX_TRANSCRIPTS_FULL: 2
+  MIN_ACTION_SCORE: 0.40
+# Change thresholds at runtime:  UPDATE ACTION360_DB.CORE.APP_CONFIG SET CONFIG_VALUE='0.55' WHERE CONFIG_KEY='LLM_ENRICHMENT_THRESHOLD';
+# then ALTER DYNAMIC TABLE ACTION360_DB.CORE.CUSTOMER_360 REFRESH;

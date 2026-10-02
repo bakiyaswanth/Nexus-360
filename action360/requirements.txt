@@ -1,0 +1,9 @@
+# Local tooling (deployment scripts, tests, local preview). The deployed Streamlit app uses only
+# packages pre-installed in the SiS container runtime, so it needs no pyproject/EAI.
+snowflake-connector-python>=3.17   # WORKLOAD_IDENTITY (OIDC) authenticator for CI
+cryptography>=42
+pyyaml>=6
+streamlit>=1.50
+altair>=5
+pandas>=2
+pytest>=8

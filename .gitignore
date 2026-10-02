@@ -1,0 +1,10 @@
+# Never commit credentials (CI uses GitHub OIDC; local dev uses ~/.snowflake outside the repo)
+*.p8
+*.pem
+*.key
+.env
+**/.streamlit/secrets.toml
+connections.toml
+config.toml
+__pycache__/
+.pytest_cache/

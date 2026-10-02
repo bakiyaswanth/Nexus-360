@@ -1,0 +1,6 @@
+__pycache__/
+.pytest_cache/
+*.p8
+*.pem
+.streamlit/secrets.toml
+tests/eval_log.txt
