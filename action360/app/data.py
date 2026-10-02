@@ -17,18 +17,28 @@ AGENT = f"{DB}.AI.ACTION360_AGENT"
 
 @st.cache_resource
 def conn():
-    return st.connection("snowflake")
+    """DB-API connection: Snowpark session inside Streamlit-in-Snowflake, st.connection locally."""
+    try:
+        from snowflake.snowpark.context import get_active_session
+        return get_active_session().connection
+    except Exception:  # noqa: BLE001 - not running inside Snowflake
+        return st.connection("snowflake").raw_connection
 
 
 def _cursor():
-    return conn().raw_connection.cursor()
+    return conn().cursor()
+
+
+def _sql(sql: str) -> str:
+    # queries are written with qmark (?) binds; adapt to connections using pyformat (%s)
+    return sql if getattr(conn(), "_paramstyle", "qmark") == "qmark" else sql.replace("?", "%s")
 
 
 def q(sql: str, params: tuple | None = None) -> pd.DataFrame:
     """Parameterised read returning a DataFrame with upper-case columns."""
     cur = _cursor()
     try:
-        cur.execute(sql, params or ())
+        cur.execute(_sql(sql), params or ())
         cols = [c[0].upper() for c in cur.description]
         return pd.DataFrame(cur.fetchall(), columns=cols)
     finally:
@@ -41,7 +51,7 @@ def call(proc: str, *args) -> dict:
     for attempt in range(2):
         cur = _cursor()
         try:
-            cur.execute(f"CALL {proc}({placeholders})", args)
+            cur.execute(_sql(f"CALL {proc}({placeholders})"), args)
             val = cur.fetchone()[0]
             return json.loads(val) if isinstance(val, str) else val
         except Exception:  # noqa: BLE001 - retry once, then surface
@@ -193,7 +203,7 @@ def knowledge(query_text: str, industry: str) -> list:
            "filter": {"@or": [{"@eq": {"INDUSTRY_TYPE": industry}}, {"@eq": {"INDUSTRY_TYPE": "ALL"}}]}}
     cur = _cursor()
     try:
-        cur.execute(f"CALL {DB}.AI.SEARCH_SERVICE('KNOWLEDGE_SEARCH', PARSE_JSON(?))", (json.dumps(req),))
+        cur.execute(_sql(f"CALL {DB}.AI.SEARCH_SERVICE('KNOWLEDGE_SEARCH', PARSE_JSON(?))"), (json.dumps(req),))
         return as_json(cur.fetchone()[0]) or []
     finally:
         cur.close()
@@ -206,7 +216,7 @@ def ask_agent(history: list[dict]) -> dict:
     t0 = time.time()
     cur = _cursor()
     try:
-        cur.execute("SELECT SNOWFLAKE.CORTEX.DATA_AGENT_RUN(?, ?)", (AGENT, json.dumps({"messages": messages})))
+        cur.execute(_sql("SELECT SNOWFLAKE.CORTEX.DATA_AGENT_RUN(?, ?)"), (AGENT, json.dumps({"messages": messages})))
         resp = json.loads(cur.fetchone()[0])
     finally:
         cur.close()
@@ -221,8 +231,8 @@ def ask_agent(history: list[dict]) -> dict:
             results.append(c.get("tool_result", {}))
     cur = _cursor()
     try:
-        cur.execute(f"""INSERT INTO {DB}.CORE.AI_USAGE_METRICS (COMPONENT, AI_ROUTE, AI_FUNCTION, MODEL, CALLS, LATENCY_MS, DETAILS)
-                        SELECT 'CORTEX_AGENT', 'FULL_AGENT', 'DATA_AGENT_RUN', 'claude-sonnet-4-6', 1, ?, PARSE_JSON(?)""",
+        cur.execute(_sql(f"""INSERT INTO {DB}.CORE.AI_USAGE_METRICS (COMPONENT, AI_ROUTE, AI_FUNCTION, MODEL, CALLS, LATENCY_MS, DETAILS)
+                        SELECT 'CORTEX_AGENT', 'FULL_AGENT', 'DATA_AGENT_RUN', 'claude-sonnet-4-6', 1, ?, PARSE_JSON(?)"""),
                     (int(latency * 1000), json.dumps({"tools": tools})))
     finally:
         cur.close()

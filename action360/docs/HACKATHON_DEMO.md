@@ -49,7 +49,7 @@ RBAC covers all of it.
 | Semantic view + Cortex Analyst | Governed business definitions and 6 verified queries |
 | Cortex Agent | Orchestrates Analyst, Search and 5 governed custom tools |
 | Streams + tasks | Incremental, event-driven enrichment of new transcripts |
-| Streamlit in Snowflake (container runtime) | Enterprise operations cockpit |
+| Streamlit in Snowflake (warehouse runtime) | Enterprise operations cockpit |
 | Resource monitor, ACCOUNT_USAGE | Cost guardrails and metered-credit observability |
 
 ## 6. Data flow

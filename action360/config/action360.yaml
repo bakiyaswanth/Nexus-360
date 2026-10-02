@@ -21,7 +21,7 @@ cortex_agent: ACTION360_DB.AI.ACTION360_AGENT
 ai_functions:
   - ACTION360_DB.AI.SUMMARIZE_CUSTOMER_RISK       # claude-haiku-4-5
   - ACTION360_DB.AI.GENERATE_PERSONALIZED_ACTION  # claude-sonnet-4-6
-streamlit_app: {name: ACTION360_DB.APP.ACTION360_APP, runtime: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11, compute_pool: SYSTEM_COMPUTE_POOL_CPU}
+streamlit_app: {name: ACTION360_DB.APP.ACTION360_APP, runtime: warehouse, packages: environment.yml}
 
 routing:
   LLM_ENRICHMENT_THRESHOLD: 0.60        # risk >= -> FULL_AGENT

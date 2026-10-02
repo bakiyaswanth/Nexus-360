@@ -20,7 +20,7 @@ All data is synthetic and de-identified. Downstream actions are **simulated** an
 
 ```
 action360/
-  app/            Streamlit-in-Snowflake app (streamlit_app.py, data.py, .streamlit/config.toml)
+  app/            Streamlit-in-Snowflake app (streamlit_app.py, data.py, environment.yml, .streamlit/config.toml)
   sql/            all Snowflake DDL/DML, in run order (see scripts/deploy_all.py)
   scripts/        deploy + utility scripts (run_sql, load_unstructured, deploy_semantic_view, deploy_streamlit, ask_agent)
   data/docs/      knowledge corpus (8 policy / product / offer documents)

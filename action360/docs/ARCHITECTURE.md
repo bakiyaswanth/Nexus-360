@@ -17,7 +17,7 @@ SEARCH         INTERACTION_SEARCH (filter by CUSTOMER_ID, sentiment, intent…) 
 TOOLS          AI.GET_CUSTOMER_360 · AI.CHECK_OFFER_ELIGIBILITY · AI.CALCULATE_NEXT_BEST_ACTION
                AI.GENERATE_PERSONALIZED_OUTREACH · AI.LOG_ACTION · AI.SEARCH_SERVICE
 AGENT          ACTION360_AGENT (claude-sonnet-4-6 orchestration; Analyst + 2 Search + 5 custom tools)
-APP            ACTION360_APP (Streamlit in Snowflake, container runtime)
+APP            ACTION360_APP (Streamlit in Snowflake, warehouse runtime)
 AUDIT          NBA_RECOMMENDATION · ACTION_AUDIT (append-only, SHA-256 hash chain) · AI_USAGE_METRICS · EVALUATION_RESULT
 ```
 
@@ -81,5 +81,5 @@ Portfolio questions go to `query_customer_metrics` (Cortex Analyst on the semant
 | AI_TRANSCRIBE | not listed for this region in the docs, but **works via cross-region inference**. It was tested with speaker diarization. |
 | CREATE AI FUNCTION (AI Function Studio) | available. Built in Studio "Direct" mode by hand-writing the DDL, because the Studio builder script and `uv` are not installed locally. |
 | Cortex Search, semantic views, Cortex Agents (DATA_AGENT_RUN) | available |
-| Streamlit container runtime | available (SYSTEM_COMPUTE_POOL_CPU) |
+| Streamlit runtime | warehouse runtime (Snowflake Anaconda channel; trial accounts cannot create the External Access Integration the container runtime needs for PyPI) |
 | `snow` / `cortex` CLI | not installed. Deployment uses the Python connector and SQL instead. |
