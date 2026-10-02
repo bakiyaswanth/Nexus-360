@@ -6,13 +6,17 @@ This module only reads governed objects and calls governed procedures.
 from __future__ import annotations
 
 import json
+import logging
 import time
 
 import pandas as pd
 import streamlit as st
 
+import contracts as k
+
 DB = "ACTION360_DB"
 AGENT = f"{DB}.AI.ACTION360_AGENT"
+log = logging.getLogger("action360.data")
 
 
 @st.cache_resource
@@ -180,12 +184,73 @@ def eligibility(cid: str) -> pd.DataFrame:
 
 
 def customer_exists(cid: str) -> bool:
-    return not q(f"SELECT 1 FROM {DB}.CORE.DIM_CUSTOMER WHERE CUSTOMER_ID = ?", (cid,)).empty
+    return not q(f"SELECT 1 FROM {DB}.CORE.DIM_CUSTOMER WHERE CUSTOMER_ID = ?", (k.normalize_customer_id(cid),)).empty
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def customer_header(cid: str) -> dict | None:
+    """Context-bar facts for one customer (None if the customer does not exist)."""
+    cid = k.normalize_customer_id(cid)
+    df = q(f"""SELECT CUSTOMER_ID, FULL_NAME, SEGMENT, INDUSTRY_TYPE, RISK_TIER, ROUND(RISK_SCORE, 2) RISK_SCORE, PRIMARY_RISK_TYPE,
+                       SENTIMENT_LABEL, ROUND(VALUE_PERCENTILE, 2) VALUE_PERCENTILE, ANNUAL_VALUE_INR, DAYS_TO_RENEWAL,
+                       NEXT_RENEWAL_DATE, NEXT_RENEWAL_PRODUCT, UNRESOLVED_COUNT, RECOMMENDED_ACTION
+                FROM {DB}.CORE.CUSTOMER_360 WHERE CUSTOMER_ID = ?""", (cid,))
+    if df.empty:
+        return None
+    r = df.iloc[0]
+    vp = k.num(r.VALUE_PERCENTILE)
+    return {
+        "customer_id": cid, "name": k.text(r.FULL_NAME), "segment": k.text(r.SEGMENT), "industry": k.text(r.INDUSTRY_TYPE),
+        "risk_tier": k.text(r.RISK_TIER), "risk_score": k.num(r.RISK_SCORE), "primary_risk": k.text(r.PRIMARY_RISK_TYPE),
+        "sentiment": k.text(r.SENTIMENT_LABEL), "value_percentile": vp,
+        "value_tier": "High value" if (vp or 0) >= 0.8 else "Mid value" if (vp or 0) >= 0.4 else "Standard value",
+        "annual_value_inr": k.num(r.ANNUAL_VALUE_INR), "days_to_renewal": k.num(r.DAYS_TO_RENEWAL),
+        "renewal_date": k.text(r.NEXT_RENEWAL_DATE), "renewal_product": k.text(r.NEXT_RENEWAL_PRODUCT),
+        "unresolved": int(k.num(r.UNRESOLVED_COUNT) or 0), "recommended_action": k.text(r.RECOMMENDED_ACTION),
+    }
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def find_customers(text_: str, limit: int = 8) -> pd.DataFrame:
+    """Search by customer ID or name (for the dashboard picker)."""
+    t = k.text(text_)
+    if not t:
+        return pd.DataFrame(columns=["CUSTOMER_ID", "FULL_NAME", "SEGMENT", "RISK_TIER"])
+    return q(f"""SELECT CUSTOMER_ID, FULL_NAME, SEGMENT, RISK_TIER FROM {DB}.CORE.CUSTOMER_360
+                 WHERE CUSTOMER_ID = UPPER(?) OR CONTAINS(LOWER(FULL_NAME), LOWER(?)) OR STARTSWITH(CUSTOMER_ID, UPPER(?))
+                 ORDER BY IFF(CUSTOMER_ID = UPPER(?), 0, 1), RISK_SCORE DESC LIMIT {int(limit)}""", (t, t, t, t))
+
+
+# ------------------------------------------------------------------ offers (one contract for every screen)
+@st.cache_data(ttl=120, show_spinner=False)
+def _offer_contract_raw(cid: str):
+    return call(f"{DB}.AI.GET_CUSTOMER_OFFERS", cid)
+
+
+def get_customer_offers(cid: str) -> dict:
+    """Validated offer contract for one customer (cache key includes the customer ID)."""
+    cid = k.normalize_customer_id(cid)
+    contract = k.validate_offer_contract(_offer_contract_raw(cid), cid)
+    if contract.get("issues"):
+        log.warning("offer contract issues for %s: %s", cid, contract["issues"])
+    return contract
+
+
+def get_recommended_offer(cid: str) -> dict | None:
+    return get_customer_offers(cid).get("offer")
+
+
+def check_offer_eligibility(cid: str, offer_id: str) -> dict:
+    """Live hard-rule check for one offer (authoritative, not cached)."""
+    return k.parse_eligibility_check(call(f"{DB}.AI.CHECK_OFFER_ELIGIBILITY", k.normalize_customer_id(cid), offer_id),
+                                     cid, offer_id)
 
 
 # ------------------------------------------------------------------ decisions
 def next_best_action(cid: str, question: str) -> dict:
-    return as_json(call(f"{DB}.AI.CALCULATE_NEXT_BEST_ACTION", cid, question))
+    """Run the deterministic engine (persists NBA_RECOMMENDATION) and return the parsed, customer-checked result."""
+    cid = k.normalize_customer_id(cid)
+    return k.parse_nba_response(call(f"{DB}.AI.CALCULATE_NEXT_BEST_ACTION", cid, question), cid)
 
 
 def outreach(rec_id: str, channel: str, force: bool = False) -> dict:
@@ -217,18 +282,12 @@ def ask_agent(history: list[dict]) -> dict:
     cur = _cursor()
     try:
         cur.execute(_sql("SELECT SNOWFLAKE.CORTEX.DATA_AGENT_RUN(?, ?)"), (AGENT, json.dumps({"messages": messages})))
-        resp = json.loads(cur.fetchone()[0])
+        resp = k.as_obj(cur.fetchone()[0])
     finally:
         cur.close()
     latency = round(time.time() - t0, 1)
-    text, tools, results = [], [], []
-    for c in resp.get("content", []):
-        if c.get("type") == "text":
-            text.append(c.get("text", ""))
-        elif c.get("type") == "tool_use":
-            tools.append(c["tool_use"].get("name"))
-        elif c.get("type") == "tool_result":
-            results.append(c.get("tool_result", {}))
+    parsed = k.parse_agent_response(resp)
+    tools = parsed["tools"]
     cur = _cursor()
     try:
         cur.execute(_sql(f"""INSERT INTO {DB}.CORE.AI_USAGE_METRICS (COMPONENT, AI_ROUTE, AI_FUNCTION, MODEL, CALLS, LATENCY_MS, DETAILS)
@@ -236,8 +295,7 @@ def ask_agent(history: list[dict]) -> dict:
                     (int(latency * 1000), json.dumps({"tools": tools})))
     finally:
         cur.close()
-    return {"text": "\n".join(text).strip(), "tools": tools, "tool_results": results, "latency_s": latency,
-            "warnings": resp.get("warnings")}
+    return {**parsed, "latency_s": latency}
 
 
 # ------------------------------------------------------------------ audit / cost / eval

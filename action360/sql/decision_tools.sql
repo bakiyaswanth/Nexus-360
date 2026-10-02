@@ -119,6 +119,109 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------
+-- Offer response contract used by the UI (Customer 360, NBA, Offers) and safe for the agent.
+-- One explicit, null-safe shape: recommended action, recommended offer (or a reason why there is none)
+-- and every catalogue offer for the customer's line of business with an explicit status:
+--   ELIGIBLE | NOT_ELIGIBLE | NEEDS_REVIEW (no hard rules defined) | UNAVAILABLE (inactive)
+-- The recommended offer is ALWAYS NBA_CANDIDATE rank-1 SELECTED_OFFER (same as CALCULATE_NEXT_BEST_ACTION).
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE AI.GET_CUSTOMER_OFFERS(CUSTOMER_ID VARCHAR)
+RETURNS VARIANT
+LANGUAGE SQL
+COMMENT = 'Read-only offer contract: recommended offer + candidate offers with explicit eligibility status and reasons. Deterministic, no LLM.'
+AS
+$$
+DECLARE
+  cid VARCHAR DEFAULT UPPER(TRIM(COALESCE(:CUSTOMER_ID, '')));
+  n INT; ind VARCHAR;
+  act VARCHAR; act_name VARCHAR; cat VARCHAR; mode VARCHAR; purpose VARCHAR; sel_offer_id VARCHAR;
+  offers VARIANT; rec VARIANT; status VARCHAR; reason VARCHAR;
+  n_cat INT DEFAULT 0; n_elig INT DEFAULT 0; cat_fail VARCHAR;
+BEGIN
+  SELECT COUNT(*), ANY_VALUE(INDUSTRY_TYPE) INTO :n, :ind FROM ACTION360_DB.CORE.CUSTOMER_360 WHERE CUSTOMER_ID = :cid;
+  IF (n = 0) THEN
+    RETURN OBJECT_CONSTRUCT('found', FALSE, 'customer_id', :cid, 'message', 'Customer ' || :cid || ' does not exist.');
+  END IF;
+
+  -- aggregate form always returns one row (NULLs when the customer has no eligible action)
+  SELECT ANY_VALUE(ACTION_CODE), ANY_VALUE(ACTION_NAME), ANY_VALUE(OFFER_CATEGORY), ANY_VALUE(OFFER_MODE),
+         ANY_VALUE(BUSINESS_PURPOSE), ANY_VALUE(SELECTED_OFFER:offer_id::STRING)
+    INTO :act, :act_name, :cat, :mode, :purpose, :sel_offer_id
+  FROM ACTION360_DB.CORE.NBA_CANDIDATE WHERE CUSTOMER_ID = :cid AND ELIGIBLE_RANK = 1;
+
+  SELECT ARRAY_AGG(OBJ) WITHIN GROUP (ORDER BY SORT_KEY, PRIORITY DESC, OFFER_ID) INTO :offers
+  FROM (
+    SELECT x.*,
+      CASE WHEN IS_RECOMMENDED THEN 0 WHEN ELIGIBILITY_STATUS = 'ELIGIBLE' THEN 1 WHEN ELIGIBILITY_STATUS = 'NEEDS_REVIEW' THEN 2
+           WHEN ELIGIBILITY_STATUS = 'NOT_ELIGIBLE' THEN 3 ELSE 4 END SORT_KEY,
+      OBJECT_CONSTRUCT_KEEP_NULL(
+        'offer_id', OFFER_ID, 'offer_name', OFFER_NAME, 'description', OFFER_DESCRIPTION, 'value_to_customer', VALUE_TO_CUSTOMER,
+        'category', OFFER_CATEGORY, 'priority', PRIORITY, 'policy_doc', POLICY_DOC_ID,
+        'eligibility_status', ELIGIBILITY_STATUS, 'is_recommended', IS_RECOMMENDED,
+        'reason', CASE ELIGIBILITY_STATUS
+                    WHEN 'ELIGIBLE' THEN 'All ' || ARRAY_SIZE(PASSED_RULES) || ' hard rules passed: ' || ARRAY_TO_STRING(PASSED_RULES, '; ')
+                    WHEN 'NOT_ELIGIBLE' THEN 'Failed hard rule(s): ' || ARRAY_TO_STRING(FAILED_RULES, '; ')
+                    WHEN 'NEEDS_REVIEW' THEN 'No hard eligibility rules are defined for this offer - manual review required'
+                    ELSE 'Offer is not active in the catalogue' END,
+        'passed_rules', COALESCE(PASSED_RULES, []), 'failed_rules', COALESCE(FAILED_RULES, []),
+        'business_purpose', CASE OFFER_CATEGORY
+                    WHEN 'RETENTION' THEN 'Retention' WHEN 'SERVICE_RECOVERY' THEN 'Service recovery'
+                    WHEN 'HARDSHIP' THEN 'Payment support' WHEN 'UPGRADE' THEN 'Upgrade / wallet share'
+                    WHEN 'CROSS_SELL' THEN 'Cross-sell / protection gap' ELSE OFFER_CATEGORY END,
+        'expected_business_outcome', CASE OFFER_CATEGORY
+                    WHEN 'RETENTION' THEN 'Prevent attrition of a valuable relationship'
+                    WHEN 'SERVICE_RECOVERY' THEN 'Restore trust after a service failure'
+                    WHEN 'HARDSHIP' THEN 'Keep the account current and protect the credit outcome'
+                    WHEN 'UPGRADE' THEN 'Grow wallet share with a better-fit product'
+                    WHEN 'CROSS_SELL' THEN 'Close a detected product / protection gap' ELSE NULL END) OBJ
+    FROM (
+      SELECT o.OFFER_ID, o.OFFER_NAME, o.OFFER_DESCRIPTION, o.VALUE_TO_CUSTOMER, o.OFFER_CATEGORY, o.PRIORITY, o.POLICY_DOC_ID,
+             e.PASSED_RULES, e.FAILED_RULES,
+             CASE WHEN NOT o.IS_ACTIVE THEN 'UNAVAILABLE' WHEN e.OFFER_ID IS NULL THEN 'NEEDS_REVIEW'
+                  WHEN e.IS_ELIGIBLE THEN 'ELIGIBLE' ELSE 'NOT_ELIGIBLE' END ELIGIBILITY_STATUS,
+             COALESCE(o.OFFER_ID = :sel_offer_id, FALSE) IS_RECOMMENDED
+      FROM ACTION360_DB.CORE.OFFER_CATALOG o
+      LEFT JOIN ACTION360_DB.CORE.OFFER_ELIGIBILITY e ON e.OFFER_ID = o.OFFER_ID AND e.CUSTOMER_ID = :cid
+      WHERE o.INDUSTRY_TYPE IN (:ind, 'ALL')) x);
+
+  SELECT ANY_VALUE(IFF(f.VALUE:is_recommended::BOOLEAN, f.VALUE, NULL)),
+         COUNT_IF(f.VALUE:eligibility_status::STRING = 'ELIGIBLE'),
+         COUNT_IF(f.VALUE:category::STRING = :cat AND f.VALUE:eligibility_status::STRING <> 'UNAVAILABLE'),
+         LISTAGG(IFF(f.VALUE:category::STRING = :cat AND f.VALUE:eligibility_status::STRING = 'NOT_ELIGIBLE',
+                     f.VALUE:offer_name::STRING || ' (' || ARRAY_TO_STRING(f.VALUE:failed_rules, '; ') || ')', NULL), ' | ')
+    INTO :rec, :n_elig, :n_cat, :cat_fail
+  FROM TABLE(FLATTEN(INPUT => COALESCE(:offers, ARRAY_CONSTRUCT()))) f;
+
+  IF (act IS NULL) THEN
+    status := 'NO_RECOMMENDATION';
+    reason := 'No action passed the guardrails and score threshold for this customer.';
+  ELSEIF (rec IS NOT NULL) THEN
+    status := 'RECOMMENDED';
+    reason := GET(rec, 'reason')::STRING;
+  ELSEIF (mode = 'NONE') THEN
+    status := 'NO_OFFER_REQUIRED';
+    reason := act_name || ' is a servicing / monitoring action - policy does not attach a commercial offer to it.';
+  ELSEIF (n_cat = 0) THEN
+    status := 'NO_ELIGIBLE_OFFER';
+    reason := 'The catalogue has no ' || REPLACE(cat, '_', ' ') || ' offer for ' || ind || ' customers, so the action proceeds without an offer.';
+  ELSE
+    status := 'NO_ELIGIBLE_OFFER';
+    reason := 'All ' || n_cat || ' ' || REPLACE(cat, '_', ' ') || ' offer(s) failed hard eligibility rules: ' || COALESCE(cat_fail, 'see candidate offers') || '.';
+  END IF;
+
+  RETURN OBJECT_CONSTRUCT_KEEP_NULL(
+    'found', TRUE, 'customer_id', :cid, 'industry_type', :ind,
+    'recommended_action', :act, 'action_name', :act_name, 'business_purpose', :purpose,
+    'offer_mode', :mode, 'offer_category', :cat,
+    'offer_status', :status, 'offer_status_reason', :reason,
+    'offer', :rec,
+    'eligible_offer_count', :n_elig,
+    'candidate_offers', COALESCE(:offers, ARRAY_CONSTRUCT()),
+    'source', 'NBA_CANDIDATE (rank 1) + OFFER_ELIGIBILITY (hard rules) + OFFER_CATALOG');
+END;
+$$;
+
+-- ---------------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE AI.CALCULATE_NEXT_BEST_ACTION(CUSTOMER_ID VARCHAR, QUESTION VARCHAR)
 RETURNS VARIANT
 LANGUAGE SQL
